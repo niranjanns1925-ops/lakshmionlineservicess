@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db, auth, storage } from '../firebase-init';
 import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { motion, AnimatePresence } from 'motion/react';
 import { FileUp, CheckCircle2, ChevronLeft, Loader2, AlertCircle } from 'lucide-react';
 import { Service, UploadedDocument } from '../types';
@@ -15,6 +15,7 @@ export function ApplyService() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [uploads, setUploads] = useState<Record<string, File>>({});
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -68,21 +69,34 @@ export function ApplyService() {
 
     try {
       const uploadedDocs: UploadedDocument[] = [];
+      const uploadPromises = Object.entries(uploads).map(([docId, file]: [string, File]) => {
+        return new Promise<UploadedDocument>((resolve, reject) => {
+          const storageRef = ref(storage, `requests/${auth.currentUser?.uid}/${Date.now()}_${file.name}`);
+          const uploadTask = uploadBytesResumable(storageRef, file);
 
-      for (const docId of Object.keys(uploads)) {
-        const file = uploads[docId];
-        const storageRef = ref(storage, `requests/${auth.currentUser.uid}/${Date.now()}_${file.name}`);
-        const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadURL(snapshot.ref);
-        
-        uploadedDocs.push({
-          docId,
-          fileUrl: url,
-          fileName: file.name,
-          fileType: file.type,
-          uploadedAt: new Date().toISOString()
+          uploadTask.on('state_changed', 
+            (snapshot) => {
+              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+              setUploadProgress(prev => ({ ...prev, [docId]: progress }));
+            },
+            (error) => reject(error),
+            async () => {
+              const url = await getDownloadURL(uploadTask.snapshot.ref);
+              resolve({
+                docId,
+                fileUrl: url,
+                fileName: file.name,
+                fileType: file.type,
+                uploadedAt: new Date().toISOString()
+              });
+            }
+          );
         });
-      }
+      });
+
+      const uploadedResults = await Promise.all(uploadPromises);
+      uploadedDocs.push(...uploadedResults);
+
 
       await addDoc(collection(db, 'requests'), {
         userId: auth.currentUser.uid,
@@ -162,7 +176,14 @@ export function ApplyService() {
                       )}
                     </div>
 
-                    <div className="relative">
+                    <div 
+                      className="relative"
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={e => {
+                        e.preventDefault();
+                        if (e.dataTransfer.files?.[0]) handleFileChange(doc.id, e.dataTransfer.files[0]);
+                      }}
+                    >
                       <input 
                         type="file" 
                         accept={doc.allowedTypes?.join(',') || ''}
@@ -172,12 +193,32 @@ export function ApplyService() {
                       />
                       <label 
                         htmlFor={`file-${doc.id}`}
-                        className={`w-full flex items-center justify-center gap-3 p-4 border-2 border-dashed rounded-[20px] cursor-pointer transition-all ${uploads[doc.id] ? 'bg-success/5 border-success text-success' : 'border-border hover:border-primary hover:bg-surface-alt text-muted'}`}
+                        className={`w-full flex flex-col items-center justify-center gap-3 p-6 border-2 border-dashed rounded-[20px] cursor-pointer transition-all ${uploads[doc.id] ? 'bg-success/5 border-success text-success' : 'border-border hover:border-primary hover:bg-surface-alt text-muted'}`}
                       >
-                        <FileUp size={18} />
-                        <span className="text-sm font-bold truncate max-w-[200px]">
-                          {uploads[doc.id] ? uploads[doc.id].name : 'Choose file or drag here'}
-                        </span>
+                        {uploadProgress[doc.id] !== undefined && uploadProgress[doc.id] < 100 ? (
+                            <div className="w-full">
+                                <div className="text-center font-bold text-xs mb-1">{Math.round(uploadProgress[doc.id])}%</div>
+                                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                                  <div className="h-full bg-success transition-all" style={{ width: `${uploadProgress[doc.id]}%` }}></div>
+                                </div>
+                            </div>
+                        ) : uploadProgress[doc.id] === 100 ? (
+                          <motion.div 
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            className="flex flex-col items-center"
+                          >
+                            <CheckCircle2 size={32} className="text-success mb-2" />
+                            <span className="text-success font-bold text-sm">Uploaded</span>
+                          </motion.div>
+                        ) : (
+                          <>
+                            <FileUp size={24} />
+                            <span className="text-sm font-bold truncate max-w-[200px]">
+                              {uploads[doc.id] ? uploads[doc.id].name : 'Choose file or drag here'}
+                            </span>
+                          </>
+                        )}
                       </label>
                     </div>
 

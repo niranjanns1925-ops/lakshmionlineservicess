@@ -12,6 +12,7 @@ export function AdminRequests() {
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
   const [remark, setRemark] = useState('');
   const [filter, setFilter] = useState('All');
+  const [previewDoc, setPreviewDoc] = useState<{ url: string, name: string, type: string } | null>(null);
 
   const handleStatusUpdate = async (id: string, status: Request['status']) => {
     if (!remark && status === 'Rejected') {
@@ -145,6 +146,12 @@ export function AdminRequests() {
                           <p className="text-xs font-bold text-primary truncate max-w-[150px]">{doc.fileName}</p>
                           <p className="text-[10px] text-muted font-medium uppercase">{doc.fileType?.split('/')[1] || 'FILE'}</p>
                         </div>
+                        <button 
+                          onClick={() => setPreviewDoc({ url: doc.fileUrl, name: doc.fileName, type: doc.fileType || '' })}
+                          className="p-2 bg-white rounded-xl text-primary hover:bg-primary hover:text-white transition-all shadow-sm"
+                        >
+                          <Eye size={14} />
+                        </button>
                         <a 
                           href={doc.fileUrl} 
                           target="_blank" 
@@ -161,6 +168,38 @@ export function AdminRequests() {
                     )}
                   </div>
                 </div>
+
+                <AnimatePresence>
+                  {previewDoc && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+                      onClick={() => setPreviewDoc(null)}
+                    >
+                      <motion.div 
+                        initial={{ scale: 0.9 }}
+                        animate={{ scale: 1 }}
+                        exit={{ scale: 0.9 }}
+                        className="bg-white rounded-3xl p-6 w-full max-w-4xl max-h-[90vh] overflow-auto shadow-2xl relative"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <div className="flex justify-between items-center mb-4">
+                          <h4 className="font-bold text-primary">{previewDoc.name}</h4>
+                          <button onClick={() => setPreviewDoc(null)} className="text-muted hover:text-primary p-2">
+                             <XCircle size={20} />
+                          </button>
+                        </div>
+                        {previewDoc.type.includes('image') ? (
+                          <img src={previewDoc.url} alt="Preview" className="w-full h-auto rounded-xl" />
+                        ) : (
+                          <iframe src={previewDoc.url} className="w-full h-[60vh] rounded-xl" title="PDF Preview" />
+                        )}
+                      </motion.div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 <div className="space-y-4">
                   <h4 className="text-xs font-extrabold text-muted uppercase tracking-widest flex items-center gap-2">
