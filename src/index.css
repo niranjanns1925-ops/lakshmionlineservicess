@@ -1,0 +1,71 @@
+/* src/index.css */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,700;1,700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", ui-serif, Georgia, serif;
+
+  --color-primary: #062c21;
+  --color-primary-light: #10634a;
+  --color-accent: #ca8a04;
+  --color-accent-light: #fde047;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f8faf9;
+  --color-border: #f1f3f1;
+  --color-muted: #94a3a0;
+  --color-background: #fdfdfb;
+  
+  --radius-card: 40px;
+  --radius-btn: 20px;
+  --radius-input: 20px;
+}
+
+@layer base {
+  body {
+    @apply font-sans bg-[#fdfdfb] text-[#101815] selection:bg-accent/20;
+  }
+
+  h1, h2, h3 {
+    @apply font-serif font-bold text-primary;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface rounded-[40px] p-8 border border-border shadow-[0_20px_60px_-15px_rgba(6,44,33,0.08)] relative overflow-hidden transition-all duration-500;
+  }
+
+  .card-hover:hover {
+    @apply -translate-y-2 shadow-[0_40px_80px_-20px_rgba(6,44,33,0.15)] border-accent;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center px-7 py-3 rounded-[20px] font-bold text-sm cursor-pointer transition-all duration-500 gap-2.5 tracking-wide;
+  }
+
+  .btn-primary {
+    @apply bg-linear-to-br from-accent to-[#b45309] text-white shadow-[0_4px_15px_rgba(202,138,4,0.3)] hover:-translate-y-0.5 hover:shadow-[0_8px_25px_rgba(202,138,4,0.4)];
+  }
+
+  /* Floating Bottom Nav */
+  .floating-nav {
+    @apply fixed bottom-4 left-4 right-4 h-16 bg-white/95 backdrop-blur-xl border border-border rounded-[24px] shadow-[0_8px_30px_rgba(0,0,0,0.08)] flex items-center justify-around px-2 z-50 md:hidden;
+  }
+
+  .nav-item-mobile {
+    @apply flex flex-col items-center gap-0.5 py-1 flex-1 text-muted transition-all duration-200;
+  }
+
+  .nav-item-mobile.active {
+    @apply text-primary font-extrabold;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loader-spinner {
+  @apply w-10 h-10 border-4 border-border border-t-primary-light rounded-full animate-[spin_1s_linear_infinite];
+}

@@ -1,0 +1,99 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Public and private profile information for citizens and officers.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["User", "Admin"] },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "email", "role"]
+    },
+    "Service": {
+      "title": "Service Catalog Item",
+      "description": "Details of government services available via E-Sevai.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "icon": { "type": "string" },
+        "color": { "type": "string" },
+        "fee": { "type": "number" },
+        "gst": { "type": "number" },
+        "processingDays": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "requiredDocs": { 
+          "type": "array",
+          "description": "Array of { id, name, description, allowedTypes: string[], required: boolean }"
+        },
+        "requestCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "category", "fee", "status"]
+    },
+    "Request": {
+      "title": "Service Request",
+      "description": "A specific service application submitted by a citizen.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "documents": { 
+          "type": "array",
+          "description": "Array of { docId, fileUrl, fileName, fileType, uploadedAt }"
+        },
+        "total": { "type": "number" },
+        "status": { "type": "string", "enum": ["Pending", "Under Review", "Approved", "Rejected", "Completed"] },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "adminRemark": { "type": "string" },
+        "timeline": { "type": "array" }
+      },
+      "required": ["userId", "serviceId", "status", "submittedAt"]
+    },
+    "Notification": {
+      "title": "System Notification",
+      "description": "Alerts and updates for users.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "read": { "type": "boolean" },
+        "type": { "type": "string" }
+      },
+      "required": ["userId", "title", "message", "timestamp", "read"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles keyed by UID."
+    },
+    "/services/{serviceId}": {
+      "schema": "Service",
+      "description": "Catalog of available services."
+    },
+    "/requests/{requestId}": {
+      "schema": "Request",
+      "description": "Service applications."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications."
+    },
+    "/admins/{userId}": {
+      "schema": { "type": "object", "properties": { "role": { "type": "string" } } },
+      "description": "Internal list of administrator UIDs."
+    }
+  }
+}
