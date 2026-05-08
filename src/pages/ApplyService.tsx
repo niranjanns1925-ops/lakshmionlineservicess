@@ -102,16 +102,24 @@ export function ApplyService() {
           const storageRef = ref(storage, `requests/${auth.currentUser?.uid}/${Date.now()}_${file.name}`);
           const uploadTask = uploadBytesResumable(storageRef, file);
 
+          // Timeout to catch CORS or network hangs
+          const timeoutId = setTimeout(() => {
+            uploadTask.cancel();
+            reject(new Error(`Upload timed out. If it's stuck at 0%, please verify cross-origin (CORS) is enabled for your Firebase Storage bucket.`));
+          }, 30000); // 30 second timeout
+
           uploadTask.on('state_changed', 
             (snapshot) => {
               const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
               setUploadProgress(prev => ({ ...prev, [docId]: progress }));
             },
             (error) => {
+              clearTimeout(timeoutId);
               console.error(`Storage Upload Error [${docId}]:`, error);
               reject(new Error(`Failed to upload ${file.name}: ${error.message}`));
             },
             async () => {
+              clearTimeout(timeoutId);
               const url = await getDownloadURL(uploadTask.snapshot.ref);
               resolve({
                 docId,
@@ -160,6 +168,11 @@ export function ApplyService() {
 
       setStep('success');
     } catch (error) {
+      if (error instanceof Error) {
+        setTopLevelError(error.message);
+      } else {
+        setTopLevelError(String(error));
+      }
       handleFirestoreError(error, OperationType.WRITE, 'requests');
     } finally {
       setSubmitting(false);
