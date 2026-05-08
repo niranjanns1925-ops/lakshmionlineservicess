@@ -58,7 +58,9 @@ export function useAuth() {
             setUser(profile);
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.GET, 'users');
+          console.error("Auth init error:", error);
+          setUser(null);
+          // Don't throw the error so we can set loading to false
         }
       } else {
         setUser(null);

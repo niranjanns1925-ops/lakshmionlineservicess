@@ -167,13 +167,29 @@ export function ApplyService() {
       }
 
       setStep('success');
-    } catch (error) {
-      if (error instanceof Error) {
-        setTopLevelError(error.message);
+    } catch (error: any) {
+      console.error('Submission error:', error);
+      const errorMessage = error?.message || String(error);
+      
+      if (errorMessage.toLowerCase().includes('upload') || 
+          errorMessage.toLowerCase().includes('storage') || 
+          errorMessage.toLowerCase().includes('cors') || 
+          errorMessage.toLowerCase().includes('timed out')) {
+        
+        let friendlyMessage = errorMessage;
+        if (errorMessage.includes('timed out')) {
+          friendlyMessage = "The upload timed out. This could be due to a poor internet connection or missing CORS configuration on the Firebase Storage bucket. Please check your setup or try again.";
+        } else if (errorMessage.includes('unauthorized') || errorMessage.includes('permissions')) {
+          friendlyMessage = "You don't have permission to upload files. Please ensure you are logged in.";
+        } else if (errorMessage.includes('canceled')) {
+          friendlyMessage = "The upload was canceled. Please try again.";
+        }
+
+        setTopLevelError(`Document upload failed: ${friendlyMessage}`);
       } else {
-        setTopLevelError(String(error));
+        setTopLevelError(`Application submission failed: ${errorMessage}`);
+        handleFirestoreError(error, OperationType.WRITE, 'requests');
       }
-      handleFirestoreError(error, OperationType.WRITE, 'requests');
     } finally {
       setSubmitting(false);
     }

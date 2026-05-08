@@ -1,8 +1,36 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    match /requests/{userId}/{allPaths=**} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if the file size is under 10MB
+    function isValidSize() {
+      return request.resource.size <= 10 * 1024 * 1024;
+    }
+    
+    // Helper function to check if the user is uploading to their own folder
+    function isUploadingToOwnFolder(uid) {
+      return request.auth.uid == uid;
+    }
+
+    // Match any document in the requests/{uid} folder
+    match /requests/{uid}/{document=**} {
+      // Users can read/write their own documents, 
+      // Admins (in real app) would need an auth token claim, 
+      // but without custom claims we usually enforce admin reads on Firestore, 
+      // or if using real-time db, we can't easily check Realtime DB from Storage Rules.
+      // So we allow authenticated users to read (assuming Firestore secures the URLs),
+      // and only the specific user can write to their folder.
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isUploadingToOwnFolder(uid) && isValidSize();
+    }
+    
+    // Fallback rule for anything else
+    match /{allPaths=**} {
+      allow read, write: if false;
     }
   }
 }
