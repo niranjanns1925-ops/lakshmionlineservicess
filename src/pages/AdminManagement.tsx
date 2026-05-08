@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { useAdmins } from '../hooks/useData';
 import { useAuth } from '../hooks/useAuth';
-import { db } from '../firebase-init';
-import { doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../firebase-init';
+import { doc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { UserPlus, UserMinus, ShieldCheck, Mail, Loader2, AlertCircle } from 'lucide-react';
 
 export function AdminManagement() {
@@ -28,13 +28,14 @@ export function AdminManagement() {
       await setDoc(doc(db, 'admins', newAdminId), {
         email: newAdminEmail,
         name: newAdminName,
-        createdAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
         addedBy: user?.email
       });
       setNewAdminId('');
       setNewAdminEmail('');
       setNewAdminName('');
     } catch (err: any) {
+      handleFirestoreError(err, OperationType.CREATE, `admins/${newAdminId}`);
       setError(err.message || 'Failed to add admin');
     } finally {
       setIsSubmitting(false);
@@ -47,7 +48,7 @@ export function AdminManagement() {
     try {
       await deleteDoc(doc(db, 'admins', adminId));
     } catch (err: any) {
-      alert('Failed to remove admin: ' + err.message);
+      handleFirestoreError(err, OperationType.DELETE, `admins/${adminId}`);
     }
   };
 

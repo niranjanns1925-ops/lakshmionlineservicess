@@ -1,6 +1,6 @@
 // src/hooks/useData.ts
 import { useState, useEffect } from 'react';
-import { db } from '../firebase-init';
+import { db, handleFirestoreError, OperationType } from '../firebase-init';
 import { collection, query, where, orderBy, onSnapshot, getDocs } from 'firebase/firestore';
 
 export function useServices() {
@@ -11,6 +11,9 @@ export function useServices() {
     const q = query(collection(db, 'services'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setServices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'services');
       setLoading(false);
     });
     return () => unsubscribe();
@@ -40,7 +43,7 @@ export function useRequests(userId?: string, isAdminMode = false) {
       setRequests(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setLoading(false);
     }, (error) => {
-      console.error("Firestore useRequests Error:", error);
+      handleFirestoreError(error, OperationType.LIST, 'requests');
       setLoading(false);
     });
     return () => unsubscribe();
@@ -57,6 +60,8 @@ export function useNotifications(userId: string) {
     const q = query(collection(db, 'notifications'), where('userId', '==', userId), orderBy('timestamp', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'notifications');
     });
     return () => unsubscribe();
   }, [userId]);
@@ -74,7 +79,7 @@ export function useAdmins() {
       setAdmins(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setLoading(false);
     }, (error) => {
-      console.error("Firestore useAdmins Error:", error);
+      handleFirestoreError(error, OperationType.LIST, 'admins');
       setLoading(false);
     });
     return () => unsubscribe();

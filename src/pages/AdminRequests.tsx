@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useRequests } from '../hooks/useData';
-import { db } from '../firebase-init';
+import { db, handleFirestoreError, OperationType } from '../firebase-init';
 import { updateDoc, doc, serverTimestamp, arrayUnion } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, XCircle, Clock, Eye, Download, MessageSquare, ChevronRight, Filter } from 'lucide-react';
@@ -35,20 +35,54 @@ export function AdminRequests() {
       setSelectedRequest(null);
       setRemark('');
     } catch (error) {
-      console.error("Error updating request:", error);
+      handleFirestoreError(error, OperationType.UPDATE, `requests/${id}`);
     }
   };
 
   const filteredRequests = requests.filter(r => filter === 'All' || r.status === filter);
+
+  const exportToCSV = () => {
+    const headers = ["Request ID", "User Name", "Service Name", "Status", "Submitted At", "Admin Remark"];
+    const rows = filteredRequests.map(req => [
+      req.id,
+      req.userName || 'N/A',
+      req.serviceName || 'N/A',
+      req.status || 'N/A',
+      req.submittedAt ? new Date(req.submittedAt.seconds * 1000).toLocaleString() : 'N/A',
+      req.adminRemark || 'N/A'
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${(cell || '').toString().replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'requests_export.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   if (loading) return <div className="p-10 text-center font-bold text-muted animate-pulse">Loading Queue...</div>;
 
   return (
     <div className="p-8 space-y-8">
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6">
-        <div>
-          <h1 className="text-3xl font-serif font-bold text-primary">Regional Queue</h1>
-          <p className="text-muted font-medium">Manage and review incoming citizen service applications</p>
+        <div className="flex items-center justify-between w-full lg:w-auto gap-4">
+          <div>
+            <h1 className="text-3xl font-serif font-bold text-primary">Regional Queue</h1>
+            <p className="text-muted font-medium">Manage and review incoming citizen service applications</p>
+          </div>
+          <button 
+            onClick={exportToCSV}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-border shadow-sm rounded-xl text-xs font-bold text-primary hover:bg-surface-alt transition-all"
+          >
+            <Download size={16} /> Export
+          </button>
         </div>
         
         <div className="flex items-center gap-2 bg-white p-1 rounded-2xl border border-border shadow-sm">
@@ -156,6 +190,7 @@ export function AdminRequests() {
                           href={doc.fileUrl} 
                           target="_blank" 
                           rel="noreferrer"
+                          download={doc.fileName}
                           className="p-2 bg-white rounded-xl text-primary hover:bg-primary hover:text-white transition-all shadow-sm"
                         >
                           <Download size={14} />

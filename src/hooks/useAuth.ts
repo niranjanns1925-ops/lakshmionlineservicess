@@ -1,7 +1,7 @@
 // src/hooks/useAuth.ts
 import { useState, useEffect } from 'react';
-import { auth as firebaseAuth, googleProvider, db } from '../firebase-init';
-import { signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { auth as firebaseAuth, googleProvider, db, handleFirestoreError, OperationType } from '../firebase-init';
+import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 export interface UserProfile {
@@ -20,42 +20,45 @@ export function useAuth() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(firebaseAuth, async (firebaseUser) => {
       if (firebaseUser) {
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        const adminDoc = await getDoc(doc(db, 'admins', firebaseUser.uid));
-        
-        const isBootstrapped = firebaseUser.email === 'admin@lakshmi.gov.in' || firebaseUser.email === 'niranjanns1925@gmail.com';
-        const isAdmin = adminDoc.exists() || isBootstrapped;
-
-        if (userDoc.exists()) {
-          const data = userDoc.data() as UserProfile;
-          // If role changed (e.g. promoted to admin), update state
-          if (isAdmin && data.role !== 'Admin') {
-             const updated = { ...data, role: 'Admin' as const };
-             setUser(updated);
-             await setDoc(doc(db, 'users', firebaseUser.uid), updated);
-          } else {
-             setUser(data);
-          }
-        } else {
-          const profile: UserProfile = {
-            uid: firebaseUser.uid,
-            name: firebaseUser.displayName || 'Citizen User',
-            email: firebaseUser.email!,
-            role: isAdmin ? 'Admin' : 'User',
-            phone: '',
-            createdAt: serverTimestamp()
-          };
+        try {
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          const adminDoc = await getDoc(doc(db, 'admins', firebaseUser.uid));
           
-          await setDoc(doc(db, 'users', firebaseUser.uid), profile);
-          if (isBootstrapped && !adminDoc.exists()) {
-            await setDoc(doc(db, 'admins', firebaseUser.uid), { 
-              email: firebaseUser.email,
-              name: firebaseUser.displayName || 'Super Admin',
-              role: 'Admin',
+          const isBootstrapped = firebaseUser.email === 'admin@lakshmi.gov.in' || firebaseUser.email === 'niranjanns1925@gmail.com';
+          const isAdmin = adminDoc.exists() || isBootstrapped;
+
+          if (userDoc.exists()) {
+            const data = userDoc.data() as UserProfile;
+            if (isAdmin && data.role !== 'Admin') {
+               const updated = { ...data, role: 'Admin' as const };
+               setUser(updated);
+               await setDoc(doc(db, 'users', firebaseUser.uid), updated);
+            } else {
+               setUser(data);
+            }
+          } else {
+            const profile: UserProfile = {
+              uid: firebaseUser.uid,
+              name: firebaseUser.displayName || 'Citizen User',
+              email: firebaseUser.email!,
+              role: isAdmin ? 'Admin' : 'User',
+              phone: '',
               createdAt: serverTimestamp()
-            });
+            };
+            
+            await setDoc(doc(db, 'users', firebaseUser.uid), profile);
+            if (isAdmin && !adminDoc.exists()) {
+              await setDoc(doc(db, 'admins', firebaseUser.uid), { 
+                email: firebaseUser.email,
+                name: firebaseUser.displayName || 'Officer',
+                role: 'Admin',
+                createdAt: serverTimestamp()
+              });
+            }
+            setUser(profile);
           }
-          setUser(profile);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.GET, 'users');
         }
       } else {
         setUser(null);

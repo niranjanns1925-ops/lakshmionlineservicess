@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useServices } from '../hooks/useData';
-import { db } from '../firebase-init';
+import { db, handleFirestoreError, OperationType } from '../firebase-init';
 import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { Plus, Trash2, Save, X, FileText, CheckCircle2 } from 'lucide-react';
 import { Service, RequiredDocument } from '../types';
@@ -45,7 +45,7 @@ export function AdminServices() {
       setEditingService(null);
       setIsAdding(false);
     } catch (error) {
-      console.error("Error saving service:", error);
+      handleFirestoreError(error, editingService.id ? OperationType.UPDATE : OperationType.CREATE, editingService.id ? `services/${editingService.id}` : 'services');
     }
   };
 

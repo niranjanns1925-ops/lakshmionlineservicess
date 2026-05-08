@@ -32,9 +32,18 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email == 'niranjanns1925@gmail.com';
     }
 
+    function isValidAdmin(data) {
+      return data.keys().hasAll(['email', 'name', 'role', 'createdAt']) &&
+             data.keys().size() >= 4 &&
+             data.email is string &&
+             data.name is string &&
+             data.role == 'Admin' &&
+             data.createdAt is timestamp;
+    }
+
     match /admins/{userId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow write: if isAdmin() && isValidAdmin(incoming());
     }
 
     function isValidId(id) {
@@ -101,7 +110,9 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
-      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && incoming().role == 'User' && incoming().createdAt == request.time;
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUser(incoming()) && 
+                       (incoming().role == 'User' || (isAdmin() && incoming().role == 'Admin')) && 
+                       incoming().createdAt == request.time;
       allow update: if isValidId(userId) && ((isOwner(userId) && isValidUser(incoming()) && 
                          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone']) &&
                          incoming().role == existing().role) || 
@@ -136,10 +147,10 @@ service cloud.firestore {
     }
 
     match /notifications/{notificationId} {
-      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow get: if isOwner(resource.data.userId);
-      allow create: if isAdmin();
-      allow update: if isOwner(resource.data.userId) && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || (isAdmin() && resource.data.userId == 'ADMIN'));
+      allow get: if isOwner(resource.data.userId) || (isAdmin() && resource.data.userId == 'ADMIN');
+      allow create: if isAdmin() || (isSignedIn() && incoming().userId == 'ADMIN');
+      allow update: if (isOwner(resource.data.userId) || (isAdmin() && existing().userId == 'ADMIN')) && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
     }
 
     match /whitelist/{email} {

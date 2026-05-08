@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { db, auth, storage } from '../firebase-init';
+import { db, auth, storage, handleFirestoreError, OperationType } from '../firebase-init';
 import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { motion, AnimatePresence } from 'motion/react';
@@ -15,8 +15,9 @@ export function ApplyService() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [uploads, setUploads] = useState<Record<string, File>>({});
-  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [topLevelError, setTopLevelError] = useState<string | null>(null);
+  const [step, setStep] = useState<'details' | 'upload' | 'success'>('details');
 
   useEffect(() => {
     async function fetchService() {
@@ -62,9 +63,11 @@ export function ApplyService() {
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
+      setTopLevelError("Please upload all mandatory documents correctly.");
       return;
     }
 
+    setTopLevelError(null);
     setSubmitting(true);
 
     try {
@@ -74,11 +77,7 @@ export function ApplyService() {
           const storageRef = ref(storage, `requests/${auth.currentUser?.uid}/${Date.now()}_${file.name}`);
           const uploadTask = uploadBytesResumable(storageRef, file);
 
-          uploadTask.on('state_changed', 
-            (snapshot) => {
-              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-              setUploadProgress(prev => ({ ...prev, [docId]: progress }));
-            },
+          uploadTask.on('state_changed', null,
             (error) => reject(error),
             async () => {
               const url = await getDownloadURL(uploadTask.snapshot.ref);
@@ -97,14 +96,13 @@ export function ApplyService() {
       const uploadedResults = await Promise.all(uploadPromises);
       uploadedDocs.push(...uploadedResults);
 
-
       await addDoc(collection(db, 'requests'), {
         userId: auth.currentUser.uid,
         userName: auth.currentUser.displayName || 'Citizen',
         serviceId: service.id,
         serviceName: service.name,
         documents: uploadedDocs,
-        total: service.fee,
+        total: Number((service.fee * 1.18).toFixed(2)),
         status: 'Pending',
         adminRemark: '',
         submittedAt: serverTimestamp(),
@@ -114,9 +112,23 @@ export function ApplyService() {
         ]
       });
 
-      navigate('/my-requests');
+      // Send a notification to the administrator
+      try {
+        await addDoc(collection(db, 'notifications'), {
+          userId: 'ADMIN',
+          title: 'New Service Request',
+          message: `${auth.currentUser.displayName} applied for ${service.name}`,
+          type: 'system',
+          read: false,
+          timestamp: serverTimestamp()
+        });
+      } catch (err) {
+        console.error("Failed to send admin notification", err);
+      }
+
+      setStep('success');
     } catch (error) {
-      console.error("Submission error:", error);
+      handleFirestoreError(error, OperationType.WRITE, 'requests');
     } finally {
       setSubmitting(false);
     }
@@ -154,106 +166,158 @@ export function ApplyService() {
             <p className="text-muted leading-relaxed">{service.description}</p>
           </header>
 
-          <form onSubmit={handleSubmit} className="space-y-8">
-            <div className="space-y-6">
-              <h3 className="text-xl font-bold text-primary flex items-center gap-2">
-                <FileUp size={20} className="text-accent" /> Document Uploads
-              </h3>
-
+          {step === 'details' && (
+            <div className="space-y-8">
               <div className="space-y-4">
-                {service.requiredDocs.map(doc => (
-                  <div key={doc.id} className="card bg-white p-6 relative overflow-hidden group">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h4 className="font-bold text-primary flex items-center gap-2">
-                          {doc.name}
-                          {doc.required && <span className="text-red-500 text-xs font-black">*</span>}
-                        </h4>
-                        <p className="text-muted text-xs font-medium">{doc.description || `Required format: ${doc.allowedTypes.map(t => t.split('/')[1].toUpperCase()).join(', ')}`}</p>
-                      </div>
-                      {uploads[doc.id] && (
-                        <CheckCircle2 className="text-success animate-in zoom-in" size={24} />
-                      )}
-                    </div>
-
-                    <div 
-                      className="relative"
-                      onDragOver={e => e.preventDefault()}
-                      onDrop={e => {
-                        e.preventDefault();
-                        if (e.dataTransfer.files?.[0]) handleFileChange(doc.id, e.dataTransfer.files[0]);
-                      }}
-                    >
-                      <input 
-                        type="file" 
-                        accept={doc.allowedTypes?.join(',') || ''}
-                        onChange={e => e.target.files?.[0] && handleFileChange(doc.id, e.target.files[0])}
-                        className="hidden" 
-                        id={`file-${doc.id}`}
-                      />
-                      <label 
-                        htmlFor={`file-${doc.id}`}
-                        className={`w-full flex flex-col items-center justify-center gap-3 p-6 border-2 border-dashed rounded-[20px] cursor-pointer transition-all ${uploads[doc.id] ? 'bg-success/5 border-success text-success' : 'border-border hover:border-primary hover:bg-surface-alt text-muted'}`}
-                      >
-                        {uploadProgress[doc.id] !== undefined && uploadProgress[doc.id] < 100 ? (
-                            <div className="w-full">
-                                <div className="text-center font-bold text-xs mb-1">{Math.round(uploadProgress[doc.id])}%</div>
-                                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                  <div className="h-full bg-success transition-all" style={{ width: `${uploadProgress[doc.id]}%` }}></div>
-                                </div>
-                            </div>
-                        ) : uploadProgress[doc.id] === 100 ? (
-                          <motion.div 
-                            initial={{ scale: 0 }}
-                            animate={{ scale: 1 }}
-                            className="flex flex-col items-center"
-                          >
-                            <CheckCircle2 size={32} className="text-success mb-2" />
-                            <span className="text-success font-bold text-sm">Uploaded</span>
-                          </motion.div>
-                        ) : (
-                          <>
-                            <FileUp size={24} />
-                            <span className="text-sm font-bold truncate max-w-[200px]">
-                              {uploads[doc.id] ? uploads[doc.id].name : 'Choose file or drag here'}
-                            </span>
-                          </>
-                        )}
-                      </label>
-                    </div>
-
-                    <AnimatePresence>
-                      {errors[doc.id] && (
-                        <motion.p 
-                          initial={{ opacity: 0, y: -10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0 }}
-                          className="mt-3 text-xs font-bold text-red-500 flex items-center gap-1"
-                        >
-                          <AlertCircle size={12} /> {errors[doc.id]}
-                        </motion.p>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                ))}
+                <h3 className="text-xl font-bold text-primary border-b border-border pb-2">Required Documents</h3>
+                <ul className="list-disc pl-5 space-y-2 text-muted">
+                  {service.requiredDocs.map(doc => (
+                    <li key={doc.id}>
+                      <span className="font-bold text-primary">{doc.name}</span>
+                      {doc.required && <span className="text-red-500 font-bold ml-1">*</span>}
+                    </li>
+                  ))}
+                </ul>
               </div>
+              <button 
+                onClick={() => setStep('upload')}
+                className="w-full btn bg-primary text-white py-6 rounded-[24px] shadow-xl hover:shadow-2xl transition-all flex items-center justify-center gap-3"
+              >
+                Proceed to Upload Documents • Total: ₹{(service.fee * 1.18).toFixed(2)}
+              </button>
             </div>
+          )}
 
-            <button 
-              type="submit" 
-              disabled={submitting}
-              className="w-full btn bg-primary text-white py-6 rounded-[24px] shadow-xl hover:shadow-2xl transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+          {step === 'upload' && (
+            <form onSubmit={handleSubmit} className="space-y-8">
+              <div className="space-y-6">
+                <h3 className="text-xl font-bold text-primary flex items-center gap-2">
+                  <FileUp size={20} className="text-accent" /> Document Uploads
+                </h3>
+                
+                <div className="space-y-4">
+                  {service.requiredDocs.map(doc => (
+                    <div key={doc.id} className="card bg-white p-6 relative overflow-hidden group">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <h4 className="font-bold text-primary flex items-center gap-2">
+                            {doc.name}
+                            {doc.required && <span className="text-red-500 text-xs font-black">*</span>}
+                          </h4>
+                          <p className="text-muted text-xs font-medium">{doc.description || `Required format: ${doc.allowedTypes.map(t => t.split('/')[1].toUpperCase()).join(', ')}`}</p>
+                        </div>
+                        {uploads[doc.id] && (
+                          <CheckCircle2 className="text-success animate-in zoom-in" size={24} />
+                        )}
+                      </div>
+
+                      <div 
+                        className="relative"
+                        onDragOver={e => e.preventDefault()}
+                        onDrop={e => {
+                          e.preventDefault();
+                          if (e.dataTransfer.files?.[0]) handleFileChange(doc.id, e.dataTransfer.files[0]);
+                        }}
+                      >
+                        <input 
+                          type="file" 
+                          accept={doc.allowedTypes?.join(',') || ''}
+                          onChange={e => e.target.files?.[0] && handleFileChange(doc.id, e.target.files[0])}
+                          className="hidden" 
+                          id={`file-${doc.id}`}
+                        />
+                        <label 
+                          htmlFor={`file-${doc.id}`}
+                          className={`w-full flex flex-col items-center justify-center gap-3 p-6 border-2 border-dashed rounded-[20px] cursor-pointer transition-all ${uploads[doc.id] ? 'bg-success/5 border-success text-success' : 'border-border hover:border-primary hover:bg-surface-alt text-muted'}`}
+                        >
+                          {uploads[doc.id] ? (
+                            <motion.div 
+                              initial={{ scale: 0 }}
+                              animate={{ scale: 1 }}
+                              className="flex flex-col items-center"
+                            >
+                              <CheckCircle2 size={32} className="text-success mb-2" />
+                              <span className="text-success font-bold text-sm">Selected</span>
+                            </motion.div>
+                          ) : (
+                            <>
+                              <FileUp size={24} />
+                              <span className="text-sm font-bold truncate max-w-[200px]">
+                                Choose file or drag here
+                              </span>
+                            </>
+                          )}
+                        </label>
+                      </div>
+
+                      <AnimatePresence>
+                        {errors[doc.id] && (
+                          <motion.p 
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0 }}
+                            className="mt-3 text-xs font-bold text-red-500 flex items-center gap-1"
+                          >
+                            <AlertCircle size={12} /> {errors[doc.id]}
+                          </motion.p>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <AnimatePresence>
+                {topLevelError && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 font-bold text-sm flex items-center gap-3"
+                  >
+                    <AlertCircle size={20} />
+                    {topLevelError}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              <button 
+                type="submit" 
+                disabled={submitting}
+                className="w-full btn bg-primary text-white py-6 rounded-[24px] shadow-xl hover:shadow-2xl transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="animate-spin" size={20} />
+                    Processing Application...
+                  </>
+                ) : (
+                  <>Submit Application • ₹ {(service.fee * 1.18).toFixed(2)}</>
+                )}
+              </button>
+            </form>
+          )}
+
+          {step === 'success' && (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-success text-white p-10 rounded-[32px] text-center space-y-6 shadow-xl"
             >
-              {submitting ? (
-                <>
-                  <Loader2 className="animate-spin" size={20} />
-                  Processing Application...
-                </>
-              ) : (
-                <>Submit Application • ₹ {service.fee}</>
-              )}
-            </button>
-          </form>
+              <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center mx-auto">
+                <CheckCircle2 size={40} />
+              </div>
+              <div>
+                <h3 className="text-2xl font-bold mb-2">Application Submitted!</h3>
+                <p className="text-white/80">Your request has been sent for review. You can track the status in your activity dashboard.</p>
+              </div>
+              <button 
+                onClick={() => navigate('/my-requests')}
+                className="px-8 py-4 bg-white text-success font-bold flex items-center justify-center rounded-2xl w-full"
+              >
+                Go to Dashboard
+              </button>
+            </motion.div>
+          )}
         </div>
 
         <aside className="space-y-6">
