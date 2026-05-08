@@ -15,6 +15,7 @@ export function ApplyService() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [uploads, setUploads] = useState<Record<string, File>>({});
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [topLevelError, setTopLevelError] = useState<string | null>(null);
   const [step, setStep] = useState<'details' | 'upload' | 'success'>('details');
@@ -77,7 +78,11 @@ export function ApplyService() {
           const storageRef = ref(storage, `requests/${auth.currentUser?.uid}/${Date.now()}_${file.name}`);
           const uploadTask = uploadBytesResumable(storageRef, file);
 
-          uploadTask.on('state_changed', null,
+          uploadTask.on('state_changed', 
+            (snapshot) => {
+              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+              setUploadProgress(prev => ({ ...prev, [docId]: progress }));
+            },
             (error) => reject(error),
             async () => {
               const url = await getDownloadURL(uploadTask.snapshot.ref);
@@ -230,7 +235,14 @@ export function ApplyService() {
                           htmlFor={`file-${doc.id}`}
                           className={`w-full flex flex-col items-center justify-center gap-3 p-6 border-2 border-dashed rounded-[20px] cursor-pointer transition-all ${uploads[doc.id] ? 'bg-success/5 border-success text-success' : 'border-border hover:border-primary hover:bg-surface-alt text-muted'}`}
                         >
-                          {uploads[doc.id] ? (
+                        {uploadProgress[doc.id] !== undefined && uploadProgress[doc.id] < 100 ? (
+                            <div className="w-full">
+                                <div className="text-center font-bold text-xs mb-1">{Math.round(uploadProgress[doc.id])}%</div>
+                                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                                  <div className="h-full bg-success transition-all" style={{ width: `${uploadProgress[doc.id]}%` }}></div>
+                                </div>
+                            </div>
+                        ) : uploads[doc.id] && (uploadProgress[doc.id] === undefined || uploadProgress[doc.id] === 100) ? (
                             <motion.div 
                               initial={{ scale: 0 }}
                               animate={{ scale: 1 }}
@@ -239,14 +251,14 @@ export function ApplyService() {
                               <CheckCircle2 size={32} className="text-success mb-2" />
                               <span className="text-success font-bold text-sm">Selected</span>
                             </motion.div>
-                          ) : (
-                            <>
-                              <FileUp size={24} />
-                              <span className="text-sm font-bold truncate max-w-[200px]">
-                                Choose file or drag here
-                              </span>
-                            </>
-                          )}
+                         ) : (
+                          <>
+                            <FileUp size={24} />
+                            <span className="text-sm font-bold truncate max-w-[200px]">
+                              Choose file or drag here
+                            </span>
+                          </>
+                        )}
                         </label>
                       </div>
 
