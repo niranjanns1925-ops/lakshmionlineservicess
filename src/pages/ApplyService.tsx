@@ -16,9 +16,28 @@ export function ApplyService() {
   const [submitting, setSubmitting] = useState(false);
   const [uploads, setUploads] = useState<Record<string, File>>({});
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const [previews, setPreviews] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [topLevelError, setTopLevelError] = useState<string | null>(null);
   const [step, setStep] = useState<'details' | 'upload' | 'success'>('details');
+
+  useEffect(() => {
+    const newPreviews = { ...previews };
+    (Object.entries(uploads) as [string, File][]).forEach(([docId, file]) => {
+      if (!newPreviews[docId]) {
+        newPreviews[docId] = URL.createObjectURL(file);
+      }
+    });
+    setPreviews(newPreviews);
+    
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploads]);
+
+  useEffect(() => {
+    return () => {
+      (Object.values(previews) as string[]).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
 
   useEffect(() => {
     async function fetchService() {
@@ -39,6 +58,11 @@ export function ApplyService() {
 
     if (!requirement.allowedTypes?.includes(file.type)) {
       setErrors(prev => ({ ...prev, [docId]: `Invalid file type. Allowed: ${requirement.allowedTypes?.join(', ') || 'N/A'}` }));
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setErrors(prev => ({ ...prev, [docId]: 'File is too large. Maximum size is 10MB.' }));
       return;
     }
 
@@ -83,7 +107,10 @@ export function ApplyService() {
               const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
               setUploadProgress(prev => ({ ...prev, [docId]: progress }));
             },
-            (error) => reject(error),
+            (error) => {
+              console.error(`Storage Upload Error [${docId}]:`, error);
+              reject(new Error(`Failed to upload ${file.name}: ${error.message}`));
+            },
             async () => {
               const url = await getDownloadURL(uploadTask.snapshot.ref);
               resolve({
@@ -246,10 +273,25 @@ export function ApplyService() {
                             <motion.div 
                               initial={{ scale: 0 }}
                               animate={{ scale: 1 }}
-                              className="flex flex-col items-center"
+                              className="flex flex-col items-center w-full"
                             >
                               <CheckCircle2 size={32} className="text-success mb-2" />
-                              <span className="text-success font-bold text-sm">Selected</span>
+                              <span className="text-success font-bold text-sm mb-2 text-center w-full truncate px-4">
+                                {uploads[doc.id].name}
+                              </span>
+                              {uploads[doc.id].type.startsWith('image/') ? (
+                                <img src={previews[doc.id]} alt="Preview" className="max-h-32 object-contain rounded-lg shadow-sm border border-border" />
+                              ) : (
+                                <a 
+                                  href={previews[doc.id]} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-primary font-bold underline mt-2"
+                                  onClick={e => e.stopPropagation()}
+                                >
+                                  Preview Document
+                                </a>
+                              )}
                             </motion.div>
                          ) : (
                           <>
