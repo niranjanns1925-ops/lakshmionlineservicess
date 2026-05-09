@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db, auth, storage, handleFirestoreError, OperationType } from '../firebase-init';
 import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { ref, getDownloadURL } from 'firebase/storage'; // Removed uploadBytesResumable, kept others if needed, but really I can just remove all if not used in ApplyService
 import imageCompression from 'browser-image-compression';
 import { motion, AnimatePresence } from 'motion/react';
 import { FileUp, CheckCircle2, ChevronLeft, Loader2, AlertCircle } from 'lucide-react';
@@ -165,38 +165,47 @@ export function ApplyService() {
       return newDocs;
     });
 
-    // Start upload immediately
-    const storageRef = ref(storage, `requests/${auth.currentUser.uid}/${Date.now()}_${fileToUpload.name}`);
-    const uploadTask = uploadBytesResumable(storageRef, fileToUpload);
+    // Start upload with Cloudinary Unsigned Upload
+    const xhr = new XMLHttpRequest();
+    // The user should define these in their .env file (or use placeholder for now)
+    const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'YOUR_CLOUD_NAME';
+    const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'YOUR_UPLOAD_PRESET';
+    
+    // Cloudinary supports /image/upload, /video/upload, and /raw/upload. 
+    // "auto" guesses the file type structure.
+    xhr.open("POST", `https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/auto/upload`, true);
+
+    const formData = new FormData();
+    formData.append("file", fileToUpload);
+    formData.append("upload_preset", cloudinaryUploadPreset);
 
     const timeoutId = setTimeout(() => {
-      uploadTask.cancel();
-      setErrors(prev => ({ ...prev, [docId]: `Upload timed out. Please check your internet connection or CORS settings.` }));
+      xhr.abort();
+      setErrors(prev => ({ ...prev, [docId]: `Upload timed out. Please check your internet connection.` }));
       setUploadProgress(prev => {
         const newProgress = { ...prev };
         delete newProgress[docId];
         return newProgress;
       });
-    }, 60000); // 60 second timeout
+      setCompressing(prev => {
+        const newCompressing = { ...prev };
+        delete newCompressing[docId];
+        return newCompressing;
+      });
+    }, 60000); // 60s timeout
 
-    uploadTask.on('state_changed', 
-      (snapshot) => {
-        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const progress = (e.loaded / e.total) * 100;
         setUploadProgress(prev => ({ ...prev, [docId]: progress }));
-      },
-      (error) => {
-        clearTimeout(timeoutId);
-        console.error(`Storage Upload Error [${docId}]:`, error);
-        setErrors(prev => ({ ...prev, [docId]: `Failed to upload: ${error.message}` }));
-        setUploadProgress(prev => {
-          const newProgress = { ...prev };
-          delete newProgress[docId];
-          return newProgress;
-        });
-      },
-      async () => {
-        clearTimeout(timeoutId);
-        const url = await getDownloadURL(uploadTask.snapshot.ref);
+      }
+    };
+
+    xhr.onload = () => {
+      clearTimeout(timeoutId);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const response = JSON.parse(xhr.responseText);
+        const url = response.secure_url;
         setUploadedDocs(prev => ({
           ...prev,
           [docId]: {
@@ -207,8 +216,31 @@ export function ApplyService() {
             uploadedAt: new Date().toISOString()
           }
         }));
+      } else {
+        const response = JSON.parse(xhr.responseText || "{}");
+        // E.g. "Upload preset must be specified", or "Invalid cloud name"
+        const errorMsg = response.error ? response.error.message : xhr.statusText;
+        console.error(`Cloudinary Upload Error [${docId}]:`, errorMsg);
+        setErrors(prev => ({ ...prev, [docId]: `Failed to upload: ${errorMsg}. Please ensure VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET are set in the .env file.` }));
+        setUploadProgress(prev => {
+          const newProgress = { ...prev };
+          delete newProgress[docId];
+          return newProgress;
+        });
       }
-    );
+    };
+
+    xhr.onerror = () => {
+      clearTimeout(timeoutId);
+      setErrors(prev => ({ ...prev, [docId]: `Upload failed due to a network error.` }));
+      setUploadProgress(prev => {
+        const newProgress = { ...prev };
+        delete newProgress[docId];
+        return newProgress;
+      });
+    };
+
+    xhr.send(formData);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
