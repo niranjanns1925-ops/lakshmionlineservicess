@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { db, auth, storage, handleFirestoreError, OperationType } from '../firebase-init';
 import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import imageCompression from 'browser-image-compression';
 import { motion, AnimatePresence } from 'motion/react';
 import { FileUp, CheckCircle2, ChevronLeft, Loader2, AlertCircle } from 'lucide-react';
 import { Service, UploadedDocument } from '../types';
@@ -14,9 +15,15 @@ export function ApplyService() {
   const [service, setService] = useState<Service | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  
+  // Track selected files, progress, and completed uploads
   const [uploads, setUploads] = useState<Record<string, File>>({});
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const [uploadedDocs, setUploadedDocs] = useState<Record<string, UploadedDocument>>({});
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [draggingDocId, setDraggingDocId] = useState<string | null>(null);
+  const [compressing, setCompressing] = useState<Record<string, boolean>>({});
+
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [topLevelError, setTopLevelError] = useState<string | null>(null);
   const [step, setStep] = useState<'details' | 'upload' | 'success'>('details');
@@ -52,16 +59,74 @@ export function ApplyService() {
     fetchService();
   }, [serviceId]);
 
-  const handleFileChange = (docId: string, file: File) => {
-    const requirement = service?.requiredDocs.find(d => d.id === docId);
-    if (!requirement) return;
+  const handleDragOver = (e: React.DragEvent, docId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDraggingDocId(docId);
+  };
 
-    if (!requirement.allowedTypes?.includes(file.type)) {
-      setErrors(prev => ({ ...prev, [docId]: `Invalid file type. Allowed: ${requirement.allowedTypes?.join(', ') || 'N/A'}` }));
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDraggingDocId(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, docId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDraggingDocId(null);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFileChange(docId, e.dataTransfer.files[0]);
+      e.dataTransfer.clearData();
+    }
+  };
+
+  const handleRemoveFile = (docId: string) => {
+    setUploads(prev => {
+      const newUploads = { ...prev };
+      delete newUploads[docId];
+      return newUploads;
+    });
+    setUploadedDocs(prev => {
+      const newDocs = { ...prev };
+      delete newDocs[docId];
+      return newDocs;
+    });
+    setUploadProgress(prev => {
+      const newProgress = { ...prev };
+      delete newProgress[docId];
+      return newProgress;
+    });
+    setCompressing(prev => {
+      const newCompressing = { ...prev };
+      delete newCompressing[docId];
+      return newCompressing;
+    });
+    setPreviews(prev => {
+      const newPreviews = { ...prev };
+      if (newPreviews[docId]) {
+        URL.revokeObjectURL(newPreviews[docId]);
+        delete newPreviews[docId];
+      }
+      return newPreviews;
+    });
+    setErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[docId];
+      return newErrors;
+    });
+  };
+
+  const handleFileChange = async (docId: string, originalFile: File) => {
+    const requirement = service?.requiredDocs.find(d => d.id === docId);
+    if (!requirement || !auth.currentUser) return;
+
+    if (!requirement.allowedTypes?.includes(originalFile.type)) {
+      setErrors(prev => ({ ...prev, [docId]: `Invalid file type. Allowed: ${requirement.allowedTypes?.map(t => t.split('/')[1].toUpperCase()).join(', ') || 'N/A'}` }));
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) {
+    if (originalFile.size > 10 * 1024 * 1024) {
       setErrors(prev => ({ ...prev, [docId]: 'File is too large. Maximum size is 10MB.' }));
       return;
     }
@@ -71,24 +136,107 @@ export function ApplyService() {
       delete newErrors[docId];
       return newErrors;
     });
-    setUploads(prev => ({ ...prev, [docId]: file }));
+
+    let fileToUpload = originalFile;
+    if (originalFile.type.startsWith('image/')) {
+      setCompressing(prev => ({ ...prev, [docId]: true }));
+      try {
+        const options = {
+          maxSizeMB: 1,
+          maxWidthOrHeight: 1920,
+          useWebWorker: true,
+        };
+        const compressedFile = await imageCompression(originalFile, options);
+        // Rename slightly to keep extension
+        fileToUpload = new File([compressedFile], originalFile.name, { type: compressedFile.type });
+      } catch (error) {
+        console.error("Compression error:", error); // Fallback to original
+      } finally {
+        setCompressing(prev => ({ ...prev, [docId]: false }));
+      }
+    }
+
+    setUploads(prev => ({ ...prev, [docId]: fileToUpload }));
+    
+    // Reset any previous uploaded document for this docId
+    setUploadedDocs(prev => {
+      const newDocs = { ...prev };
+      delete newDocs[docId];
+      return newDocs;
+    });
+
+    // Start upload immediately
+    const storageRef = ref(storage, `requests/${auth.currentUser.uid}/${Date.now()}_${fileToUpload.name}`);
+    const uploadTask = uploadBytesResumable(storageRef, fileToUpload);
+
+    const timeoutId = setTimeout(() => {
+      uploadTask.cancel();
+      setErrors(prev => ({ ...prev, [docId]: `Upload timed out. Please check your internet connection or CORS settings.` }));
+      setUploadProgress(prev => {
+        const newProgress = { ...prev };
+        delete newProgress[docId];
+        return newProgress;
+      });
+    }, 60000); // 60 second timeout
+
+    uploadTask.on('state_changed', 
+      (snapshot) => {
+        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        setUploadProgress(prev => ({ ...prev, [docId]: progress }));
+      },
+      (error) => {
+        clearTimeout(timeoutId);
+        console.error(`Storage Upload Error [${docId}]:`, error);
+        setErrors(prev => ({ ...prev, [docId]: `Failed to upload: ${error.message}` }));
+        setUploadProgress(prev => {
+          const newProgress = { ...prev };
+          delete newProgress[docId];
+          return newProgress;
+        });
+      },
+      async () => {
+        clearTimeout(timeoutId);
+        const url = await getDownloadURL(uploadTask.snapshot.ref);
+        setUploadedDocs(prev => ({
+          ...prev,
+          [docId]: {
+            docId,
+            fileUrl: url,
+            fileName: fileToUpload.name,
+            fileType: fileToUpload.type,
+            uploadedAt: new Date().toISOString()
+          }
+        }));
+      }
+    );
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!service || !auth.currentUser) return;
 
-    // Validate mandatory docs
+    // Validate mandatory docs are fully uploaded
     const newErrors: Record<string, string> = {};
     service.requiredDocs.forEach(doc => {
-      if (doc.required && !uploads[doc.id]) {
-        newErrors[doc.id] = 'This document is mandatory';
+      if (doc.required && !uploadedDocs[doc.id]) {
+        if (uploads[doc.id]) {
+           newErrors[doc.id] = 'Please wait for the upload to complete';
+        } else {
+           newErrors[doc.id] = 'This document is mandatory';
+        }
       }
     });
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
-      setTopLevelError("Please upload all mandatory documents correctly.");
+      setTopLevelError("Please completely upload all mandatory documents before submitting.");
+      return;
+    }
+
+    // Check if any optional docs are still uploading
+    const isUploadingAny = Object.keys(uploads).some(docId => uploads[docId] && !uploadedDocs[docId] && !errors[docId]);
+    if (isUploadingAny) {
+      setTopLevelError("Please wait for all active document uploads to finish before submitting.");
       return;
     }
 
@@ -96,52 +244,14 @@ export function ApplyService() {
     setSubmitting(true);
 
     try {
-      const uploadedDocs: UploadedDocument[] = [];
-      const uploadPromises = Object.entries(uploads).map(([docId, file]: [string, File]) => {
-        return new Promise<UploadedDocument>((resolve, reject) => {
-          const storageRef = ref(storage, `requests/${auth.currentUser?.uid}/${Date.now()}_${file.name}`);
-          const uploadTask = uploadBytesResumable(storageRef, file);
-
-          // Timeout to catch CORS or network hangs
-          const timeoutId = setTimeout(() => {
-            uploadTask.cancel();
-            reject(new Error(`Upload timed out. If it's stuck at 0%, please verify cross-origin (CORS) is enabled for your Firebase Storage bucket.`));
-          }, 30000); // 30 second timeout
-
-          uploadTask.on('state_changed', 
-            (snapshot) => {
-              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-              setUploadProgress(prev => ({ ...prev, [docId]: progress }));
-            },
-            (error) => {
-              clearTimeout(timeoutId);
-              console.error(`Storage Upload Error [${docId}]:`, error);
-              reject(new Error(`Failed to upload ${file.name}: ${error.message}`));
-            },
-            async () => {
-              clearTimeout(timeoutId);
-              const url = await getDownloadURL(uploadTask.snapshot.ref);
-              resolve({
-                docId,
-                fileUrl: url,
-                fileName: file.name,
-                fileType: file.type,
-                uploadedAt: new Date().toISOString()
-              });
-            }
-          );
-        });
-      });
-
-      const uploadedResults = await Promise.all(uploadPromises);
-      uploadedDocs.push(...uploadedResults);
+      const finalUploads = Object.values(uploadedDocs);
 
       await addDoc(collection(db, 'requests'), {
         userId: auth.currentUser.uid,
         userName: auth.currentUser.displayName || 'Citizen',
         serviceId: service.id,
         serviceName: service.name,
-        documents: uploadedDocs,
+        documents: finalUploads,
         total: Number((service.fee * 1.18).toFixed(2)),
         status: 'Pending',
         adminRemark: '',
@@ -169,27 +279,8 @@ export function ApplyService() {
       setStep('success');
     } catch (error: any) {
       console.error('Submission error:', error);
-      const errorMessage = error?.message || String(error);
-      
-      if (errorMessage.toLowerCase().includes('upload') || 
-          errorMessage.toLowerCase().includes('storage') || 
-          errorMessage.toLowerCase().includes('cors') || 
-          errorMessage.toLowerCase().includes('timed out')) {
-        
-        let friendlyMessage = errorMessage;
-        if (errorMessage.includes('timed out')) {
-          friendlyMessage = "The upload timed out. This could be due to a poor internet connection or missing CORS configuration on the Firebase Storage bucket. Please check your setup or try again.";
-        } else if (errorMessage.includes('unauthorized') || errorMessage.includes('permissions')) {
-          friendlyMessage = "You don't have permission to upload files. Please ensure you are logged in.";
-        } else if (errorMessage.includes('canceled')) {
-          friendlyMessage = "The upload was canceled. Please try again.";
-        }
-
-        setTopLevelError(`Document upload failed: ${friendlyMessage}`);
-      } else {
-        setTopLevelError(`Application submission failed: ${errorMessage}`);
-        handleFirestoreError(error, OperationType.WRITE, 'requests');
-      }
+      setTopLevelError(`Application submission failed: ${error?.message || String(error)}`);
+      handleFirestoreError(error, OperationType.WRITE, 'requests');
     } finally {
       setSubmitting(false);
     }
@@ -232,8 +323,8 @@ export function ApplyService() {
               <div className="space-y-4">
                 <h3 className="text-xl font-bold text-primary border-b border-border pb-2">Required Documents</h3>
                 <ul className="list-disc pl-5 space-y-2 text-muted">
-                  {service.requiredDocs.map(doc => (
-                    <li key={doc.id}>
+                  {service.requiredDocs.map((doc, idx) => (
+                    <li key={doc.id || doc.name || idx}>
                       <span className="font-bold text-primary">{doc.name}</span>
                       {doc.required && <span className="text-red-500 font-bold ml-1">*</span>}
                     </li>
@@ -257,17 +348,17 @@ export function ApplyService() {
                 </h3>
                 
                 <div className="space-y-4">
-                  {service.requiredDocs.map(doc => (
-                    <div key={doc.id} className="card bg-white p-6 relative overflow-hidden group">
+                  {service.requiredDocs.map((doc, idx) => (
+                    <div key={doc.id || doc.name || idx} className="card bg-white p-6 relative overflow-hidden group">
                       <div className="flex justify-between items-start mb-4">
                         <div>
                           <h4 className="font-bold text-primary flex items-center gap-2">
                             {doc.name}
                             {doc.required && <span className="text-red-500 text-xs font-black">*</span>}
                           </h4>
-                          <p className="text-muted text-xs font-medium">{doc.description || `Required format: ${doc.allowedTypes.map(t => t.split('/')[1].toUpperCase()).join(', ')}`}</p>
+                          <p className="text-muted text-xs font-medium">{doc.description || `Required format: ${doc.allowedTypes?.map(t => t.split('/')[1].toUpperCase()).join(', ') || 'N/A'}. Max size: 10MB.`}</p>
                         </div>
-                        {uploads[doc.id] && (
+                        {uploadedDocs[doc.id] && (
                           <CheckCircle2 className="text-success animate-in zoom-in" size={24} />
                         )}
                       </div>
@@ -289,16 +380,29 @@ export function ApplyService() {
                         />
                         <label 
                           htmlFor={`file-${doc.id}`}
-                          className={`w-full flex flex-col items-center justify-center gap-3 p-6 border-2 border-dashed rounded-[20px] cursor-pointer transition-all ${uploads[doc.id] ? 'bg-success/5 border-success text-success' : 'border-border hover:border-primary hover:bg-surface-alt text-muted'}`}
+                          onDragOver={(e) => handleDragOver(e, doc.id)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={(e) => handleDrop(e, doc.id)}
+                          className={`w-full flex flex-col items-center justify-center gap-3 p-6 border-2 border-dashed rounded-[20px] cursor-pointer transition-all ${
+                            errors[doc.id] ? 'bg-red-50 border-red-500 text-red-500' :
+                            draggingDocId === doc.id ? 'border-primary bg-primary/5' : 
+                            (compressing[doc.id] || (uploadProgress[doc.id] !== undefined && uploadProgress[doc.id] < 100)) ? 'bg-blue-50/50 border-blue-400 text-blue-500' :
+                            uploadedDocs[doc.id] ? 'bg-success/5 border-success text-success' : 'border-border hover:border-primary hover:bg-surface-alt text-muted'
+                          }`}
                         >
-                        {uploadProgress[doc.id] !== undefined && uploadProgress[doc.id] < 100 ? (
+                        {compressing[doc.id] ? (
+                            <div className="flex flex-col items-center gap-2">
+                                <Loader2 className="animate-spin text-blue-500" size={24} />
+                                <span className="text-sm font-bold text-blue-500">Compressing Image...</span>
+                            </div>
+                        ) : uploadProgress[doc.id] !== undefined && uploadProgress[doc.id] < 100 ? (
                             <div className="w-full">
-                                <div className="text-center font-bold text-xs mb-1">{Math.round(uploadProgress[doc.id])}%</div>
-                                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                  <div className="h-full bg-success transition-all" style={{ width: `${uploadProgress[doc.id]}%` }}></div>
+                                <div className="text-center font-bold text-xs mb-1 text-blue-500">{Math.round(uploadProgress[doc.id])}% Uploading...</div>
+                                <div className="h-2 bg-blue-100 rounded-full overflow-hidden">
+                                  <div className="h-full bg-blue-500 transition-all" style={{ width: `${uploadProgress[doc.id]}%` }}></div>
                                 </div>
                             </div>
-                        ) : uploads[doc.id] && (uploadProgress[doc.id] === undefined || uploadProgress[doc.id] === 100) ? (
+                        ) : uploadedDocs[doc.id] ? (
                             <motion.div 
                               initial={{ scale: 0 }}
                               animate={{ scale: 1 }}
@@ -306,9 +410,9 @@ export function ApplyService() {
                             >
                               <CheckCircle2 size={32} className="text-success mb-2" />
                               <span className="text-success font-bold text-sm mb-2 text-center w-full truncate px-4">
-                                {uploads[doc.id].name}
+                                {uploads[doc.id]?.name}
                               </span>
-                              {uploads[doc.id].type.startsWith('image/') ? (
+                              {uploads[doc.id]?.type.startsWith('image/') ? (
                                 <img src={previews[doc.id]} alt="Preview" className="max-h-32 object-contain rounded-lg shadow-sm border border-border" />
                               ) : (
                                 <a 
@@ -321,10 +425,28 @@ export function ApplyService() {
                                   Preview Document
                                 </a>
                               )}
+                              <button
+                                type="button"
+                                className="mt-4 px-4 py-2 bg-white text-red-500 font-bold text-xs border border-red-100 rounded-xl hover:bg-red-50 transition-colors shadow-sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  handleRemoveFile(doc.id);
+                                }}
+                              >
+                                Replace File
+                              </button>
                             </motion.div>
+                         ) : errors[doc.id] ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <AlertCircle size={24} className="text-red-500" />
+                            <span className="text-sm font-bold truncate text-red-500 max-w-[250px] text-center whitespace-normal">
+                              Upload failed. Try again.
+                            </span>
+                          </div>
                          ) : (
                           <>
-                            <FileUp size={24} />
+                            <FileUp size={24} className="mb-2" />
                             <span className="text-sm font-bold truncate max-w-[200px]">
                               Choose file or drag here
                             </span>

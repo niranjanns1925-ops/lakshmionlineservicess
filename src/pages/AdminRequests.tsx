@@ -180,21 +180,23 @@ export function AdminRequests() {
                           <p className="text-xs font-bold text-primary truncate max-w-[150px]">{doc.fileName}</p>
                           <p className="text-[10px] text-muted font-medium uppercase">{doc.fileType?.split('/')[1] || 'FILE'}</p>
                         </div>
-                        <button 
-                          onClick={() => setPreviewDoc({ url: doc.fileUrl, name: doc.fileName, type: doc.fileType || '' })}
-                          className="p-2 bg-white rounded-xl text-primary hover:bg-primary hover:text-white transition-all shadow-sm"
-                        >
-                          <Eye size={14} />
-                        </button>
-                        <a 
-                          href={doc.fileUrl} 
-                          target="_blank" 
-                          rel="noreferrer"
-                          download={doc.fileName}
-                          className="p-2 bg-white rounded-xl text-primary hover:bg-primary hover:text-white transition-all shadow-sm"
-                        >
-                          <Download size={14} />
-                        </a>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => setPreviewDoc({ url: doc.fileUrl, name: doc.fileName, type: doc.fileType || '' })}
+                            className="p-2 bg-white rounded-xl text-primary hover:bg-primary hover:text-white transition-all shadow-sm"
+                          >
+                            <Eye size={14} />
+                          </button>
+                          <a 
+                            href={doc.fileUrl} 
+                            target="_blank" 
+                            rel="noreferrer"
+                            download={doc.fileName}
+                            className="p-2 bg-white rounded-xl text-primary hover:bg-primary hover:text-white transition-all shadow-sm"
+                          >
+                            <Download size={14} />
+                          </a>
+                        </div>
                       </div>
                     )) || (
                       <div className="p-4 text-center text-xs font-bold text-muted border-2 border-dashed border-border rounded-2xl italic">
